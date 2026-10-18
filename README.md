@@ -59,7 +59,9 @@ Each log line looks like:
 [`deploy/nginx.conf`](deploy/nginx.conf) serves the honeypot on both HTTP and
 HTTPS, forwards the client's TLS parameters (protocol, offered ciphers and
 curves) as `X-Honeypot-TLS-*` headers so they land in the request log, and
-writes its own JSON access log so requests nginx rejects before proxying (e.g.
+also exposes the standard self-hosted LLM ports on the raw IP (11434 Ollama,
+8000 vLLM, 4000 LiteLLM, 1234 LM Studio, 5000, 8080) — which is where
+internet-wide scanners actually look. It writes its own JSON access log so requests nginx rejects before proxying (e.g.
 oversized bodies) are recorded too.
 
 A hardened systemd unit is in [`deploy/llm-honeypot.service`](deploy/llm-honeypot.service).
@@ -70,7 +72,9 @@ A hardened systemd unit is in [`deploy/llm-honeypot.service`](deploy/llm-honeypo
 log lines written since its last run (it keeps a byte-offset cursor), so you can
 run it on a schedule to see new visitors incrementally. It enriches each new IP
 with passive lookups only (PTR record, Team Cymru ASN via DNS), keeps a history
-of every IP seen, and prints the prompts that were sent.
+of every IP seen, and prints the prompts that were sent. Bait API keys listed in
+`/var/lib/llm-honeypot/canaries.json` (`{"key": "where it was published"}`) are
+flagged, so you learn which leak a visitor harvested.
 
 ## Ethics
 

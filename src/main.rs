@@ -154,6 +154,13 @@ fn route(
     match (req.method.as_str(), path) {
         ("GET", "/health") | ("GET", "/health/readiness") | ("GET", "/healthz") =>
             respond(stream, cfg, 200, "application/json", br#"{"status":"ok"}"#),
+        // Ollama's fingerprint (what Shodan & co. match on) on its port / hostname.
+        ("GET", "/") | ("HEAD", "/") if looks_like_ollama(req) =>
+            respond(stream, cfg, 200, "text/plain; charset=utf-8", b"Ollama is running"),
+        ("GET", "/api/version") =>
+            respond(stream, cfg, 200, "application/json", br#"{"version":"0.12.6"}"#),
+        ("GET", "/api/ps") =>
+            respond(stream, cfg, 200, "application/json", br#"{"models":[]}"#),
         ("GET", "/") =>
             respond(stream, cfg, 200, "application/json",
                 br#"{"status":"ok","message":"OpenAI-compatible inference server"}"#),
@@ -192,6 +199,11 @@ fn route(
         _ => respond(stream, cfg, 404, "application/json",
             br#"{"error":{"message":"Not Found","type":"invalid_request_error"}}"#),
     }
+}
+
+fn looks_like_ollama(req: &Request) -> bool {
+    header(req, "x-honeypot-local-port") == Some("11434")
+        || header(req, "host").is_some_and(|h| h.starts_with("ollama."))
 }
 
 // ---- canned payloads --------------------------------------------------------

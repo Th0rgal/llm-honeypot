@@ -24,6 +24,8 @@ STATE = os.environ.get("HONEYPOT_STATE", "/var/lib/llm-honeypot")
 CUR = os.path.join(STATE, "report.offset")
 INTEL = os.path.join(STATE, "intel.json")
 HIST = os.path.join(STATE, "history.json")
+# {"<bait api key>": "<where it was published>"}; a hit means a harvested key.
+CANARIES = os.path.join(STATE, "canaries.json")
 IGNORE = [p for p in os.environ.get("HONEYPOT_IGNORE", "").split(",") if p]
 
 
@@ -132,9 +134,9 @@ def main():
         print("NEW=0")
         return
 
-    intel, hist = load(INTEL, {}), load(HIST, {})
+    intel, hist, canaries = load(INTEL, {}), load(HIST, {}), load(CANARIES, {})
     ips = collections.defaultdict(lambda: {
-        "n": 0, "ua": set(), "models": set(), "keys": set(), "tls": set(),
+        "n": 0, "ua": set(), "models": set(), "keys": set(), "tls": set(), "ports": set(),
         "paths": collections.Counter(), "prompts": [],
     })
     chat = 0
@@ -150,7 +152,10 @@ def main():
         if d.get("model"):
             e["models"].add(str(d["model"])[:40])
         if d.get("api_key"):
-            e["keys"].add(str(d["api_key"])[:24])
+            k = str(d["api_key"])
+            e["keys"].add("CANARY:%s" % canaries[k] if k in canaries else k[:24])
+        h2 = {k.lower(): v for k, v in d.get("headers") or []}
+        e["ports"].add("%s/%s" % (h2.get("x-honeypot-local-port", "?"), h2.get("host", "?")))
         fp = tls_fp(d)
         if fp:
             e["tls"].add(fp)
@@ -177,7 +182,7 @@ def main():
             i.get("rdns"), i.get("asn", "?"), i.get("as_name", "?"), i.get("cc", "?"), i.get("prefix", ""),
         ))
         print("    ua=%s tls=%s" % (sorted(e["ua"]) or ["-"], sorted(e["tls"])))
-        print("    paths=%s" % dict(e["paths"]))
+        print("    via=%s paths=%s" % (sorted(e["ports"]), dict(e["paths"])))
         if e["models"] or e["keys"]:
             print("    models=%s keys=%s" % (sorted(e["models"]), sorted(e["keys"])))
         for p in e["prompts"]:
