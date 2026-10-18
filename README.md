@@ -43,35 +43,24 @@ HONEYPOT_ADDR=127.0.0.1:8099 HONEYPOT_LOG=/var/log/llm-honeypot/requests.jsonl \
 | `HONEYPOT_RATE` | `30` | max requests per IP per window |
 | `HONEYPOT_RATE_WINDOW_SECS` | `10` | rate-limit window |
 | `HONEYPOT_MAX_CONN` | `128` | max concurrent connections |
-| `HONEYPOT_MAX_BODY` | `262144` | max request body bytes read/logged |
+| `HONEYPOT_MAX_BODY` | `4194304` | max request body bytes read/logged |
 | `HONEYPOT_SERVER_NAME` | `uvicorn` | `Server:` header value |
 
 Each log line looks like:
 
 ```json
 {"ts":"2026-10-18T12:00:00Z","ip":"203.0.113.7","method":"POST","path":"/v1/chat/completions",
- "ua":"OpenAI-Python/1.0","api_key":"sk-...","model":"gpt-4o","stream":true,
- "body":"{\"model\":\"gpt-4o\",...}"}
+ "version":"HTTP/1.1","ua":"OpenAI-Python/1.0","api_key":"sk-...","model":"gpt-4o","stream":true,
+ "body_len":123,"headers":[["Host","llm.example.com"],...],"body":"{\"model\":\"gpt-4o\",...}"}
 ```
 
 ## Reverse proxy (nginx)
 
-```nginx
-server {
-    listen 443 ssl;
-    server_name llm.example.com;
-    ssl_certificate     /etc/letsencrypt/live/llm.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/llm.example.com/privkey.pem;
-    location / {
-        proxy_pass http://127.0.0.1:8099;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_buffering off;   # let SSE stream
-    }
-}
-```
+[`deploy/nginx.conf`](deploy/nginx.conf) serves the honeypot on both HTTP and
+HTTPS, forwards the client's TLS parameters (protocol, offered ciphers and
+curves) as `X-Honeypot-TLS-*` headers so they land in the request log, and
+writes its own JSON access log so requests nginx rejects before proxying (e.g.
+oversized bodies) are recorded too.
 
 A hardened systemd unit is in [`deploy/llm-honeypot.service`](deploy/llm-honeypot.service).
 
@@ -79,7 +68,9 @@ A hardened systemd unit is in [`deploy/llm-honeypot.service`](deploy/llm-honeypo
 
 [`scripts/report.py`](scripts/report.py) prints a compact per-IP summary of the
 log lines written since its last run (it keeps a byte-offset cursor), so you can
-run it on a schedule to see new visitors incrementally.
+run it on a schedule to see new visitors incrementally. It enriches each new IP
+with passive lookups only (PTR record, Team Cymru ASN via DNS), keeps a history
+of every IP seen, and prints the prompts that were sent.
 
 ## Ethics
 

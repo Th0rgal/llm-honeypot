@@ -34,7 +34,7 @@ fn main() {
         rate: env_or("HONEYPOT_RATE", "30").parse().unwrap_or(30),
         rate_window: Duration::from_secs(env_or("HONEYPOT_RATE_WINDOW_SECS", "10").parse().unwrap_or(10)),
         max_conn: env_or("HONEYPOT_MAX_CONN", "128").parse().unwrap_or(128),
-        max_body: env_or("HONEYPOT_MAX_BODY", "262144").parse().unwrap_or(262144),
+        max_body: env_or("HONEYPOT_MAX_BODY", "4194304").parse().unwrap_or(4194304),
         server_name: env_or("HONEYPOT_SERVER_NAME", "uvicorn"),
     };
     let cfg = Arc::new(cfg);
@@ -61,6 +61,12 @@ fn main() {
         if live.load(Ordering::Relaxed) >= cfg.max_conn {
             // Too many in flight: shed load without spawning.
             let _ = quick_503(&stream);
+            if let Some(f) = &logfile {
+                let ip = stream.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default();
+                if let Ok(mut f) = f.lock() {
+                    let _ = writeln!(f, "{{\"ts\":{},\"event\":\"overflow\",\"peer\":{}}}", now_unix(), json_str(&ip));
+                }
+            }
             continue;
         }
         live.fetch_add(1, Ordering::Relaxed);
@@ -81,6 +87,7 @@ fn quick_503(stream: &TcpStream) -> std::io::Result<()> {
 struct Request {
     method: String,
     path: String,
+    version: String,
     headers: Vec<(String, String)>,
     body: String,
     truncated: bool,
@@ -211,6 +218,10 @@ fn now_unix() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+fn now_millis() -> u128 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+}
+
 fn chat_json(model: &str) -> String {
     format!(
         "{{\"id\":\"chatcmpl-honeypot\",\"object\":\"chat.completion\",\"created\":{},\
@@ -286,6 +297,7 @@ fn read_request(reader: &mut BufReader<TcpStream>, max_body: usize) -> Option<Re
     let mut it = line.trim_end().split_whitespace();
     let method = it.next()?.to_string();
     let path = it.next().unwrap_or("/").to_string();
+    let version = it.next().unwrap_or("-").to_string();
 
     let mut headers = Vec::new();
     let mut content_length = 0usize;
@@ -303,7 +315,7 @@ fn read_request(reader: &mut BufReader<TcpStream>, max_body: usize) -> Option<Re
             if k.eq_ignore_ascii_case("content-length") {
                 content_length = v.parse().unwrap_or(0);
             }
-            if headers.len() < 64 {
+            if headers.len() < 128 {
                 headers.push((k, v));
             }
         }
@@ -311,15 +323,15 @@ fn read_request(reader: &mut BufReader<TcpStream>, max_body: usize) -> Option<Re
 
     let (body, truncated) = if content_length > 0 {
         let want = content_length.min(max_body);
-        let mut buf = vec![0u8; want];
-        let got = reader.read(&mut buf).unwrap_or(0);
-        buf.truncate(got);
-        (String::from_utf8_lossy(&buf).into_owned(), content_length > max_body)
+        let mut buf = Vec::with_capacity(want);
+        let _ = reader.by_ref().take(want as u64).read_to_end(&mut buf);
+        let short = buf.len() < want;
+        (String::from_utf8_lossy(&buf).into_owned(), content_length > max_body || short)
     } else {
         (String::new(), false)
     };
 
-    Some(Request { method, path, headers, body, truncated })
+    Some(Request { method, path, version, headers, body, truncated })
 }
 
 // ---- tiny JSON field extraction (no parser, no deps) ------------------------
@@ -384,18 +396,30 @@ fn log_request(
     api_key: Option<&str>,
 ) {
     let ua = header(req, "user-agent").unwrap_or("-");
+    let mut headers = String::from("[");
+    for (i, (k, v)) in req.headers.iter().enumerate() {
+        if i > 0 {
+            headers.push(',');
+        }
+        headers.push_str(&format!("[{},{}]", json_str(k), json_str(v)));
+    }
+    headers.push(']');
     let line = format!(
-        "{{\"ts\":{},\"ip\":{},\"method\":{},\"path\":{},\"ua\":{},\"api_key\":{},\
-\"model\":{},\"stream\":{},\"body_truncated\":{},\"body\":{}}}\n",
+        "{{\"ts\":{},\"ts_ms\":{},\"ip\":{},\"method\":{},\"path\":{},\"version\":{},\"ua\":{},\
+\"api_key\":{},\"model\":{},\"stream\":{},\"body_truncated\":{},\"body_len\":{},\"headers\":{},\"body\":{}}}\n",
         now_unix(),
+        now_millis(),
         json_str(ip),
         json_str(&req.method),
         json_str(&req.path),
+        json_str(&req.version),
         json_str(ua),
         api_key.map(json_str).unwrap_or_else(|| "null".into()),
         model.as_deref().map(json_str).unwrap_or_else(|| "null".into()),
         stream_flag,
         req.truncated,
+        req.body.len(),
+        headers,
         json_str(&req.body),
     );
     match logfile {
