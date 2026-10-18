@@ -75,6 +75,12 @@ server {
 
 A hardened systemd unit is in [`deploy/llm-honeypot.service`](deploy/llm-honeypot.service).
 
+## Reporting
+
+[`scripts/report.py`](scripts/report.py) prints a compact per-IP summary of the
+log lines written since its last run (it keeps a byte-offset cursor), so you can
+run it on a schedule to see new visitors incrementally.
+
 ## Ethics
 
 This is a **passive** defensive tool. It waits for unsolicited traffic to a host
