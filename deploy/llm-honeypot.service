@@ -1,0 +1,50 @@
+[Unit]
+Description=llm-honeypot (fake open LLM endpoint; logs probes)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Dedicated unprivileged user (create: adduser --system --no-create-home --group honeypot)
+User=honeypot
+Group=honeypot
+Environment=HONEYPOT_ADDR=127.0.0.1:8099
+Environment=HONEYPOT_LOG=/var/log/llm-honeypot/requests.jsonl
+Environment=HONEYPOT_SERVER_NAME=uvicorn
+ExecStart=/usr/local/bin/llm-honeypot
+Restart=always
+RestartSec=2
+
+# Logs directory (systemd creates /var/log/llm-honeypot owned by the service user)
+LogsDirectory=llm-honeypot
+LogsDirectoryMode=0750
+
+# Hardening: the honeypot only needs a loopback socket and its log file.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+# Resource caps keep a flood from hurting the host.
+MemoryMax=128M
+TasksMax=256
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

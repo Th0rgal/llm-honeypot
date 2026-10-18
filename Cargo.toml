@@ -1,0 +1,19 @@
+[package]
+name = "llm-honeypot"
+version = "0.1.0"
+edition = "2021"
+description = "A tiny, dependency-free LLM endpoint honeypot: impersonates an open OpenAI/Ollama-style inference API and logs every probe."
+license = "MIT"
+repository = "https://github.com/Th0rgal/llm-honeypot"
+readme = "README.md"
+keywords = ["honeypot", "llm", "security", "openai", "ollama"]
+categories = ["command-line-utilities", "network-programming"]
+
+[dependencies]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
